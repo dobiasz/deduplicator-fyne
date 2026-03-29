@@ -144,7 +144,6 @@ func (m *ScanManager) Cancel() {
 	m.mu.Lock()
 	if m.cancel != nil {
 		m.cancel()
-		m.cancel = nil
 	}
 	m.mu.Unlock()
 }
