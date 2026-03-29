@@ -107,7 +107,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 				now := time.Now()
 				if lastScanStatusAt.IsZero() || now.Sub(lastScanStatusAt) > 120*time.Millisecond {
 					lastScanStatusAt = now
-					emitProgress(0, fmt.Sprintf("Scanning %s", path), false, true)
+					emitProgress(0, fmt.Sprintf("Scanning %s", path), false, false)
 				}
 
 				info, err := d.Info()
@@ -129,7 +129,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 				return nil
 			})
 
-			emitProgress(0, fmt.Sprintf("Scanned %d files in %s", scannedFiles, root), false, true)
+			emitProgress(0, fmt.Sprintf("Scanned %d files in %s", scannedFiles, root), false, false)
 		}
 
 		for _, files := range bySize {

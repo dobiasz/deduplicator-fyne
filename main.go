@@ -157,9 +157,7 @@ func (ui *AppUI) build() {
 		),
 	)
 
-	statusBar := container.NewBorder(nil, nil, nil, nil,
-		container.NewHBox(ui.progressBar, ui.statusLabel, layout.NewSpacer()),
-	)
+	statusBar := container.NewBorder(nil, nil, ui.progressBar, nil, ui.statusLabel)
 
 	content := container.NewBorder(controls, statusBar, nil, nil, scroll)
 	ui.win.SetContent(content)
@@ -349,7 +347,8 @@ func newDuplicatePanel(files []string, musicDates map[string]string, alternate b
 			dateLabel = widget.NewLabel(info.ModTime().Format("01-02 15:04"))
 		}
 
-		pathLabel := widget.NewLabel(compactPath(currentPath, 140))
+		pathLabel := widget.NewLabel(currentPath)
+		pathLabel.Selectable = true
 		pathLabel.Alignment = fyne.TextAlignLeading
 		pathLabel.Wrapping = fyne.TextTruncate
 		pathLabel.Truncation = fyne.TextTruncateClip
