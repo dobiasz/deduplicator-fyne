@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -112,16 +113,24 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 			}
 			completed++
 			contentMap := map[[32]byte][]string{}
-			for _, path := range files {
+			for fileIdx, path := range files {
 				if isCancelled(ctx) {
 					runOnMain(func() { onProgress(0, "Cancelled", true) })
 					return
 				}
+				// Show progress as group progress + per-file progress within group
+				fileProgress := float64(fileIdx) / float64(len(files))
+				groupProgress := float64(completed-1) / float64(groupCount)
+				overallProgress := (groupProgress + fileProgress/float64(groupCount))
 				runOnMain(func() {
-					onProgress(float64(completed-1)/float64(groupCount), fmt.Sprintf("Comparing %s", filepath.Base(path)), false)
+					onProgress(overallProgress, fmt.Sprintf("Comparing %s", filepath.Base(path)), false)
 				})
-				data, err := os.ReadFile(path)
+				data, err := readFileWithCancel(ctx, path)
 				if err != nil {
+					if err == context.Canceled {
+						runOnMain(func() { onProgress(0, "Cancelled", true) })
+						return
+					}
 					fmt.Println(err)
 					continue
 				}
@@ -169,6 +178,55 @@ func runOnMain(fn func()) {
 
 func isCancelled(ctx context.Context) bool {
 	return ctx != nil && ctx.Err() != nil
+}
+
+// readFileWithCancel reads a file while respecting cancellation context.
+// For large files, it reads in chunks to allow cancellation mid-read.
+func readFileWithCancel(ctx context.Context, path string) ([]byte, error) {
+	if isCancelled(ctx) {
+		return nil, context.Canceled
+	}
+
+	// Try to read the whole file at once
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	// For small files, read directly
+	if info.Size() < 10*1024*1024 {
+		return io.ReadAll(file)
+	}
+
+	// For large files, read in chunks with cancellation checks
+	const chunkSize = 1024 * 1024 // 1MB chunks
+	var data []byte
+	chunk := make([]byte, chunkSize)
+
+	for {
+		if isCancelled(ctx) {
+			return nil, context.Canceled
+		}
+
+		n, err := file.Read(chunk)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+		if n > 0 {
+			data = append(data, chunk[:n]...)
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+
+	return data, nil
 }
 
 func checkExtension(path string, info fs.FileInfo, skipMp3 bool, musicDates map[string]string) bool {
@@ -240,8 +298,11 @@ func removeInternalDuplicates(ctx context.Context, dir string, skipMp3 bool, mus
 			if isCancelled(ctx) {
 				return nil
 			}
-			data, err := os.ReadFile(path)
+			data, err := readFileWithCancel(ctx, path)
 			if err != nil {
+				if err == context.Canceled {
+					return nil
+				}
 				continue
 			}
 			hash := sha256.Sum256(data)
