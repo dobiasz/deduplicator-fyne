@@ -11,10 +11,16 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
 )
+
+type hashResult struct {
+	sum [32]byte
+	err error
+}
 
 type ScanCallback func(group []string, musicDates map[string]string)
 type ScanProgress func(progress float64, message string, finished bool)
@@ -25,6 +31,7 @@ type ScanManager struct {
 	mu      sync.Mutex
 	running bool
 	doneCh  chan struct{}
+	cancelRequested atomic.Bool
 }
 
 func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGroup ScanCallback, onProgress ScanProgress) {
@@ -37,6 +44,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 	m.cancel = cancel
 	m.running = true
 	m.doneCh = make(chan struct{})
+	m.cancelRequested.Store(false)
 	m.mu.Unlock()
 
 	go func() {
@@ -47,8 +55,24 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 			m.mu.Unlock()
 		}()
 
+		lastProgressAt := time.Time{}
+		isStopRequested := func() bool {
+			return m.cancelRequested.Load() || isCancelled(ctx)
+		}
+		emitProgress := func(progress float64, message string, finished bool, force bool) {
+			if !force && isStopRequested() {
+				return
+			}
+			now := time.Now()
+			if !force && !finished && !lastProgressAt.IsZero() && now.Sub(lastProgressAt) < 80*time.Millisecond {
+				return
+			}
+			lastProgressAt = now
+			runOnMain(func() { onProgress(progress, message, finished) })
+		}
+
 		if len(roots) == 0 {
-			runOnMain(func() { onProgress(0, "Add at least one root before starting", true) })
+			emitProgress(0, "Add at least one root before starting", true, true)
 			return
 		}
 
@@ -57,11 +81,11 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 		groupCount := 0
 
 		for _, root := range roots {
-			if isCancelled(ctx) {
-				runOnMain(func() { onProgress(0, "Cancelled", true) })
+			if isStopRequested() {
+				emitProgress(0, "Cancelled", true, true)
 				return
 			}
-			runOnMain(func() { onProgress(0, fmt.Sprintf("Scanning %s", root), false) })
+			emitProgress(0, fmt.Sprintf("Scanning %s", root), false, true)
 			filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					fmt.Println(err)
@@ -103,9 +127,10 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 		}
 
 		completed := 0
+		duplicateGroups := make([][]string, 0)
 		for _, files := range bySize {
-			if isCancelled(ctx) {
-				runOnMain(func() { onProgress(0, "Cancelled", true) })
+			if isStopRequested() {
+				emitProgress(0, "Cancelled", true, true)
 				return
 			}
 			if len(files) <= 1 {
@@ -114,27 +139,24 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 			completed++
 			contentMap := map[[32]byte][]string{}
 			for fileIdx, path := range files {
-				if isCancelled(ctx) {
-					runOnMain(func() { onProgress(0, "Cancelled", true) })
+				if isStopRequested() {
+					emitProgress(0, "Cancelled", true, true)
 					return
 				}
 				// Show progress as group progress + per-file progress within group
 				fileProgress := float64(fileIdx) / float64(len(files))
 				groupProgress := float64(completed-1) / float64(groupCount)
 				overallProgress := (groupProgress + fileProgress/float64(groupCount))
-				runOnMain(func() {
-					onProgress(overallProgress, fmt.Sprintf("Comparing %s", filepath.Base(path)), false)
-				})
-				data, err := readFileWithCancel(ctx, path)
+				emitProgress(overallProgress, fmt.Sprintf("Comparing %s", filepath.Base(path)), false, false)
+				hash, err := hashFileWithCancel(ctx, path)
 				if err != nil {
 					if err == context.Canceled {
-						runOnMain(func() { onProgress(0, "Cancelled", true) })
+						emitProgress(0, "Cancelled", true, true)
 						return
 					}
 					fmt.Println(err)
 					continue
 				}
-				hash := sha256.Sum256(data)
 				contentMap[hash] = append(contentMap[hash], path)
 			}
 			for _, group := range contentMap {
@@ -142,17 +164,24 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 					continue
 				}
 				sort.Strings(group)
-				runOnMain(func() {
-					onGroup(group, musicDates)
-				})
+				groupCopy := append([]string(nil), group...)
+				duplicateGroups = append(duplicateGroups, groupCopy)
 			}
 		}
 
-		runOnMain(func() { onProgress(1.0, "Finished", true) })
+		for _, group := range duplicateGroups {
+			groupForUI := group
+			runOnMain(func() {
+				onGroup(groupForUI, musicDates)
+			})
+		}
+
+		emitProgress(1.0, "Finished", true, true)
 	}()
 }
 
 func (m *ScanManager) Cancel() {
+	m.cancelRequested.Store(true)
 	m.mu.Lock()
 	if m.cancel != nil {
 		m.cancel()
@@ -180,53 +209,57 @@ func isCancelled(ctx context.Context) bool {
 	return ctx != nil && ctx.Err() != nil
 }
 
-// readFileWithCancel reads a file while respecting cancellation context.
-// For large files, it reads in chunks to allow cancellation mid-read.
-func readFileWithCancel(ctx context.Context, path string) ([]byte, error) {
+
+// hashFileWithCancel computes a file hash in chunks so cancellation can interrupt compare quickly.
+func hashFileWithCancel(ctx context.Context, path string) ([32]byte, error) {
+	var zero [32]byte
 	if isCancelled(ctx) {
-		return nil, context.Canceled
+		return zero, context.Canceled
 	}
 
-	// Try to read the whole file at once
 	file, err := os.Open(path)
 	if err != nil {
-		return nil, err
-	}
-	defer file.Close()
-
-	info, err := file.Stat()
-	if err != nil {
-		return nil, err
+		return zero, err
 	}
 
-	// For small files, read directly
-	if info.Size() < 10*1024*1024 {
-		return io.ReadAll(file)
+	resultCh := make(chan hashResult, 1)
+	go func() {
+		defer file.Close()
+		h := sha256.New()
+		const chunkSize = 1024 * 1024
+		chunk := make([]byte, chunkSize)
+
+		for {
+			n, readErr := file.Read(chunk)
+			if n > 0 {
+				if _, writeErr := h.Write(chunk[:n]); writeErr != nil {
+					resultCh <- hashResult{err: writeErr}
+					return
+				}
+			}
+			if readErr != nil && readErr != io.EOF {
+				resultCh <- hashResult{err: readErr}
+				return
+			}
+			if readErr == io.EOF {
+				break
+			}
+		}
+
+		sum := h.Sum(nil)
+		var out [32]byte
+		copy(out[:], sum)
+		resultCh <- hashResult{sum: out}
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Closing the file interrupts blocking reads so hashing can stop promptly.
+		_ = file.Close()
+		return zero, context.Canceled
+	case res := <-resultCh:
+		return res.sum, res.err
 	}
-
-	// For large files, read in chunks with cancellation checks
-	const chunkSize = 1024 * 1024 // 1MB chunks
-	var data []byte
-	chunk := make([]byte, chunkSize)
-
-	for {
-		if isCancelled(ctx) {
-			return nil, context.Canceled
-		}
-
-		n, err := file.Read(chunk)
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
-		if n > 0 {
-			data = append(data, chunk[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-	}
-
-	return data, nil
 }
 
 func checkExtension(path string, info fs.FileInfo, skipMp3 bool, musicDates map[string]string) bool {
@@ -298,14 +331,13 @@ func removeInternalDuplicates(ctx context.Context, dir string, skipMp3 bool, mus
 			if isCancelled(ctx) {
 				return nil
 			}
-			data, err := readFileWithCancel(ctx, path)
+			hash, err := hashFileWithCancel(ctx, path)
 			if err != nil {
 				if err == context.Canceled {
 					return nil
 				}
 				continue
 			}
-			hash := sha256.Sum256(data)
 			contentMap[hash] = append(contentMap[hash], path)
 		}
 		for _, group := range contentMap {

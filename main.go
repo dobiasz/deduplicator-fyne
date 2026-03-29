@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
@@ -21,6 +21,7 @@ type AppUI struct {
 	win            fyne.Window
 	roots          []string
 	selectedRoot   int
+	scanRunID      uint64
 	rootsList      *widget.List
 	duplicateBox   *fyne.Container
 	progressBar    *widget.ProgressBar
@@ -153,6 +154,8 @@ func (ui *AppUI) removeRoot() {
 }
 
 func (ui *AppUI) startScan() {
+	ui.scanRunID++
+	runID := ui.scanRunID
 	ui.clearDuplicates()
 	ui.sortBtn.Disable()
 	ui.startBtn.Disable()
@@ -165,10 +168,16 @@ func (ui *AppUI) startScan() {
 
 	ui.scanManager.Start(ui.roots, ui.removeInternal.Checked, ui.skipMp3M4a.Checked,
 		func(group []string, musicDates map[string]string) {
+			if runID != ui.scanRunID {
+				return
+			}
 			ui.addDuplicateGroup(group, musicDates)
 			ui.sortBtn.Enable()
 		},
 		func(progress float64, message string, finished bool) {
+			if runID != ui.scanRunID {
+				return
+			}
 			ui.progressBar.SetValue(progress)
 			ui.setStatus(message)
 			if finished {
@@ -179,13 +188,42 @@ func (ui *AppUI) startScan() {
 	go func() {
 		// Keep UI state updated in case the scan ends immediately.
 		<-ui.scanManager.done()
-		fyne.Do(uicontinue)
+		fyne.Do(func() {
+			if runID != ui.scanRunID {
+				return
+			}
+			uicontinue()
+		})
 	}()
 }
 
 func (ui *AppUI) stopScan() {
+	if !ui.scanManager.IsRunning() {
+		ui.stopBtn.Disable()
+		ui.startBtn.Enable()
+		return
+	}
+
+	// Invalidate queued callbacks from the active run so they cannot overwrite stop state.
+	ui.scanRunID++
+	stopRunID := ui.scanRunID
+
+	ui.stopBtn.Disable()
+	ui.startBtn.Disable()
 	ui.scanManager.Cancel()
 	ui.setStatus("Stopping scan...")
+
+	go func() {
+		<-ui.scanManager.done()
+		fyne.Do(func() {
+			if stopRunID != ui.scanRunID {
+				return
+			}
+			ui.startBtn.Enable()
+			ui.stopBtn.Disable()
+			ui.setStatus("Cancelled")
+		})
+	}()
 }
 
 func (ui *AppUI) clearDuplicates() {
@@ -237,12 +275,13 @@ func newDuplicatePanel(files []string, musicDates map[string]string) *DuplicateP
 	for _, path := range files {
 		currentPath := path
 		var dateLabel *widget.Label
-		if !strings.HasPrefix(currentPath, "/Volumes/Warehouse") {
-			parent := filepath.Dir(currentPath)
-			if ts, ok := musicDates[parent]; ok {
-				dateLabel = widget.NewLabel(ts)
-				dateLabel.TextStyle = fyne.TextStyle{Bold: true}
-			}
+		parent := filepath.Dir(currentPath)
+		if ts, ok := musicDates[parent]; ok {
+			dateLabel = widget.NewLabel(ts)
+			dateLabel.TextStyle = fyne.TextStyle{Bold: true}
+		} else if info, err := os.Stat(currentPath); err == nil {
+			dateLabel = widget.NewLabel(info.ModTime().Format(time.RFC3339))
+			dateLabel.TextStyle = fyne.TextStyle{Bold: true}
 		}
 
 		pathLabel := widget.NewLabel(currentPath)
