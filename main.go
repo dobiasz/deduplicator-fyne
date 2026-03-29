@@ -364,12 +364,12 @@ func newDuplicatePanel(files []string, musicDates map[string]string, alternate b
 		parent := filepath.Dir(currentPath)
 		if ts, ok := musicDates[parent]; ok {
 			if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
-				dateLabel = widget.NewLabel(parsed.Format("01-02 15:04"))
+				dateLabel = widget.NewLabel(parsed.Format("2006-01-02"))
 			} else {
-				dateLabel = widget.NewLabel(compactPath(ts, 16))
+				dateLabel = widget.NewLabel(compactPath(ts, 10))
 			}
 		} else if info, err := os.Stat(currentPath); err == nil {
-			dateLabel = widget.NewLabel(info.ModTime().Format("01-02 15:04"))
+			dateLabel = widget.NewLabel(info.ModTime().Format("2006-01-02"))
 		}
 
 		pathLabel := widget.NewLabel(currentPath)
