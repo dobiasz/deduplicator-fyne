@@ -1,18 +1,22 @@
 package main
 
 import (
+	"image/color"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -106,6 +110,8 @@ func newAppUI(a fyne.App, w fyne.Window) *AppUI {
 func (ui *AppUI) build() {
 	ui.progressBar = widget.NewProgressBar()
 	ui.statusLabel = widget.NewLabel("Ready")
+	ui.statusLabel.Wrapping = fyne.TextTruncate
+	ui.statusLabel.Truncation = fyne.TextTruncateClip
 	ui.removeInternal = widget.NewCheck("Remove internal duplicates", nil)
 	ui.skipMp3M4a = widget.NewCheck("Skip MP3 & M4A", nil)
 	ui.sortBtn = widget.NewButton("Sort", ui.sortDuplicates)
@@ -135,7 +141,7 @@ func (ui *AppUI) build() {
 	ui.stopBtn = widget.NewButton("Stop", ui.stopScan)
 	ui.stopBtn.Disable()
 
-	ui.duplicateBox = container.NewVBox()
+	ui.duplicateBox = container.New(layout.NewCustomPaddedVBoxLayout(0))
 	scroll := container.NewScroll(ui.duplicateBox)
 	scroll.SetMinSize(fyne.NewSize(1000, 650))
 
@@ -287,7 +293,7 @@ func (ui *AppUI) clearDuplicates() {
 }
 
 func (ui *AppUI) addDuplicateGroup(files []string, musicDates map[string]string) {
-	panel := newDuplicatePanel(files, musicDates)
+	panel := newDuplicatePanel(files, musicDates, len(ui.panels)%2 == 1)
 	ui.panels = append(ui.panels, panel)
 	ui.duplicateBox.Add(panel.container)
 	ui.duplicateBox.Refresh()
@@ -324,55 +330,94 @@ func (ui *AppUI) revalidateDuplicates() {
 }
 
 func (ui *AppUI) setStatus(message string) {
-	ui.statusLabel.SetText(message)
+	ui.statusLabel.SetText(compactStatusMessage(message))
 }
 
-func newDuplicatePanel(files []string, musicDates map[string]string) *DuplicatePanel {
+func newDuplicatePanel(files []string, musicDates map[string]string, alternate bool) *DuplicatePanel {
 	rows := make([]fyne.CanvasObject, 0, len(files))
 	for _, path := range files {
 		currentPath := path
 		var dateLabel *widget.Label
 		parent := filepath.Dir(currentPath)
 		if ts, ok := musicDates[parent]; ok {
-			dateLabel = widget.NewLabel(ts)
-			dateLabel.TextStyle = fyne.TextStyle{Bold: true}
+			if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+				dateLabel = widget.NewLabel(parsed.Format("01-02 15:04"))
+			} else {
+				dateLabel = widget.NewLabel(compactPath(ts, 16))
+			}
 		} else if info, err := os.Stat(currentPath); err == nil {
-			dateLabel = widget.NewLabel(info.ModTime().Format(time.RFC3339))
-			dateLabel.TextStyle = fyne.TextStyle{Bold: true}
+			dateLabel = widget.NewLabel(info.ModTime().Format("01-02 15:04"))
 		}
 
-		pathLabel := widget.NewLabel(currentPath)
-		pathLabel.Selectable = true
+		pathLabel := widget.NewLabel(compactPath(currentPath, 140))
 		pathLabel.Alignment = fyne.TextAlignLeading
 		pathLabel.Wrapping = fyne.TextTruncate
 		pathLabel.Truncation = fyne.TextTruncateClip
 
-		openBtn := widget.NewButton("Open", func() {
-			openFileDirectory(currentPath)
-		})
+		openControl := widget.NewToolbar(
+			widget.NewToolbarAction(theme.FolderOpenIcon(), func() {
+				openFileDirectory(currentPath)
+			}),
+		)
 
+		rightControls := container.NewHBox(openControl)
 		if dateLabel != nil {
-			row := container.NewBorder(nil, nil, nil,
-				container.NewHBox(layout.NewSpacer(), dateLabel, openBtn),
-				pathLabel,
-			)
-			rows = append(rows, row)
-		} else {
-			row := container.NewBorder(nil, nil, nil,
-				container.NewHBox(layout.NewSpacer(), openBtn),
-				pathLabel,
-			)
-			rows = append(rows, row)
+			rightControls = container.NewHBox(dateLabel, openControl)
 		}
+
+		row := container.NewBorder(nil, nil, nil, rightControls, pathLabel)
+		rows = append(rows, row)
 	}
 
-	groupContainer := container.NewVBox(rows...)
-	card := widget.NewCard("", "", groupContainer)
+	groupContainer := container.New(layout.NewCustomPaddedVBoxLayout(0), rows...)
+	bgColor := color.NRGBA{R: 247, G: 247, B: 247, A: 255}
+	if alternate {
+		bgColor = color.NRGBA{R: 238, G: 238, B: 238, A: 255}
+	}
+	bg := &canvas.Rectangle{FillColor: bgColor}
+	groupPanel := container.NewMax(bg, groupContainer)
+
 	return &DuplicatePanel{
-		container: container.NewVBox(card),
+		container: groupPanel,
 		firstPath: files[0],
 		filePaths: files,
 	}
+}
+
+func compactStatusMessage(message string) string {
+	const scanPrefix = "Scanning "
+	if strings.HasPrefix(message, scanPrefix) {
+		return scanPrefix + compactPath(strings.TrimPrefix(message, scanPrefix), 120)
+	}
+
+	const scannedPrefix = "Scanned "
+	if strings.HasPrefix(message, scannedPrefix) {
+		idx := strings.LastIndex(message, " in ")
+		if idx > 0 {
+			head := message[:idx+4]
+			tail := message[idx+4:]
+			return head + compactPath(tail, 90)
+		}
+	}
+
+	return message
+}
+
+func compactPath(path string, maxLen int) string {
+	if maxLen < 16 || len(path) <= maxLen {
+		return path
+	}
+
+	const ellipsis = "..."
+	keep := maxLen - len(ellipsis)
+	left := keep / 2
+	right := keep - left
+
+	if left <= 0 || right <= 0 {
+		return path
+	}
+
+	return path[:left] + ellipsis + strings.TrimLeft(path[len(path)-right:], string(filepath.Separator))
 }
 
 func (p *DuplicatePanel) isValid() bool {
