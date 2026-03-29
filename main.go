@@ -250,6 +250,7 @@ func (ui *AppUI) stopScan() {
 	if !ui.scanManager.IsRunning() {
 		ui.stopBtn.Disable()
 		ui.startBtn.Enable()
+		ui.setStatus("Ready")
 		return
 	}
 
@@ -260,7 +261,7 @@ func (ui *AppUI) stopScan() {
 	ui.stopBtn.Disable()
 	ui.startBtn.Disable()
 	ui.scanManager.Cancel()
-	ui.setStatus("Stopping scan...")
+	ui.setStatus("Ready")
 
 	go func() {
 		<-ui.scanManager.done()
