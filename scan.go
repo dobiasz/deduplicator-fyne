@@ -79,6 +79,8 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 		bySize := map[int64][]string{}
 		musicDates := map[string]string{}
 		groupCount := 0
+		scannedFiles := 0
+		lastScanStatusAt := time.Time{}
 
 		for _, root := range roots {
 			if isStopRequested() {
@@ -100,6 +102,14 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 					}
 					return nil
 				}
+
+				scannedFiles++
+				now := time.Now()
+				if lastScanStatusAt.IsZero() || now.Sub(lastScanStatusAt) > 120*time.Millisecond {
+					lastScanStatusAt = now
+					emitProgress(0, fmt.Sprintf("Scanning %s", path), false, true)
+				}
+
 				info, err := d.Info()
 				if err != nil {
 					fmt.Println(err)
@@ -118,6 +128,8 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 				bySize[info.Size()] = append(bySize[info.Size()], path)
 				return nil
 			})
+
+			emitProgress(0, fmt.Sprintf("Scanned %d files in %s", scannedFiles, root), false, true)
 		}
 
 		for _, files := range bySize {
