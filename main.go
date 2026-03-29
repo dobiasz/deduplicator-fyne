@@ -51,9 +51,10 @@ type AppUI struct {
 }
 
 type DuplicatePanel struct {
-	container *fyne.Container
-	firstPath string
-	filePaths []string
+	container  *fyne.Container
+	background *canvas.Rectangle
+	firstPath  string
+	filePaths  []string
 }
 
 func main() {
@@ -202,6 +203,12 @@ func (ui *AppUI) removeRoot() {
 }
 
 func (ui *AppUI) startScan() {
+	if len(ui.roots) == 0 {
+		if cwd, err := os.Getwd(); err == nil && cwd != "" {
+			ui.addRootPath(cwd)
+		}
+	}
+
 	ui.scanRunID++
 	runID := ui.scanRunID
 	ui.clearDuplicates()
@@ -293,6 +300,7 @@ func (ui *AppUI) clearDuplicates() {
 func (ui *AppUI) addDuplicateGroup(files []string, musicDates map[string]string) {
 	panel := newDuplicatePanel(files, musicDates, len(ui.panels)%2 == 1)
 	ui.panels = append(ui.panels, panel)
+	ui.refreshPanelBackgrounds()
 	ui.duplicateBox.Add(panel.container)
 	ui.duplicateBox.Refresh()
 }
@@ -301,6 +309,7 @@ func (ui *AppUI) sortDuplicates() {
 	sort.Slice(ui.panels, func(i, j int) bool {
 		return ui.panels[i].firstPath < ui.panels[j].firstPath
 	})
+	ui.refreshPanelBackgrounds()
 	ui.duplicateBox.Objects = nil
 	for _, panel := range ui.panels {
 		ui.duplicateBox.Add(panel.container)
@@ -318,6 +327,7 @@ func (ui *AppUI) revalidateDuplicates() {
 		}
 	}
 	ui.panels = validPanels
+	ui.refreshPanelBackgrounds()
 	ui.duplicateBox.Refresh()
 	if len(ui.panels) == 0 {
 		ui.sortBtn.Disable()
@@ -325,6 +335,21 @@ func (ui *AppUI) revalidateDuplicates() {
 		return
 	}
 	ui.revalidateBtn.Enable()
+}
+
+func (ui *AppUI) refreshPanelBackgrounds() {
+	for i, panel := range ui.panels {
+		if panel == nil || panel.background == nil {
+			continue
+		}
+
+		if i%2 == 1 {
+			panel.background.FillColor = color.NRGBA{R: 238, G: 238, B: 238, A: 255}
+		} else {
+			panel.background.FillColor = color.NRGBA{R: 247, G: 247, B: 247, A: 255}
+		}
+		panel.background.Refresh()
+	}
 }
 
 func (ui *AppUI) setStatus(message string) {
@@ -377,9 +402,10 @@ func newDuplicatePanel(files []string, musicDates map[string]string, alternate b
 	groupPanel := container.NewMax(bg, groupContainer)
 
 	return &DuplicatePanel{
-		container: groupPanel,
-		firstPath: files[0],
-		filePaths: files,
+		container:  groupPanel,
+		background: bg,
+		firstPath:  files[0],
+		filePaths:  files,
 	}
 }
 
