@@ -13,6 +13,8 @@ go mod tidy
 go run .
 ```
 
+**Note:** The `build.sh` script defaults to Go 1.22.12 because Go 1.26.x has a module resolution issue with legacy packages transitively required by Fyne's test dependencies. You can override this by setting `GOTOOLCHAIN` before running the script (e.g., `GOTOOLCHAIN=go1.27.0 ./build.sh`).
+
 ## Features
 
 - Pick folders to scan for duplicate files.
