@@ -111,6 +111,7 @@ func (ui *AppUI) build() {
 	ui.sortBtn = widget.NewButton("Sort", ui.sortDuplicates)
 	ui.sortBtn.Disable()
 	ui.revalidateBtn = widget.NewButton("Revalidate", ui.revalidateDuplicates)
+	ui.revalidateBtn.Disable()
 
 	ui.rootsList = widget.NewList(
 		func() int { return len(ui.roots) },
@@ -201,6 +202,7 @@ func (ui *AppUI) startScan() {
 	runID := ui.scanRunID
 	ui.clearDuplicates()
 	ui.sortBtn.Disable()
+	ui.revalidateBtn.Disable()
 	ui.startBtn.Disable()
 	ui.stopBtn.Enable()
 
@@ -216,6 +218,7 @@ func (ui *AppUI) startScan() {
 			}
 			ui.addDuplicateGroup(group, musicDates)
 			ui.sortBtn.Enable()
+			ui.revalidateBtn.Enable()
 		},
 		func(progress float64, message string, finished bool) {
 			if runID != ui.scanRunID {
@@ -280,6 +283,7 @@ func (ui *AppUI) clearDuplicates() {
 	ui.duplicateBox.Objects = nil
 	ui.duplicateBox.Refresh()
 	ui.panels = nil
+	ui.revalidateBtn.Disable()
 }
 
 func (ui *AppUI) addDuplicateGroup(files []string, musicDates map[string]string) {
@@ -313,7 +317,10 @@ func (ui *AppUI) revalidateDuplicates() {
 	ui.duplicateBox.Refresh()
 	if len(ui.panels) == 0 {
 		ui.sortBtn.Disable()
+		ui.revalidateBtn.Disable()
+		return
 	}
+	ui.revalidateBtn.Enable()
 }
 
 func (ui *AppUI) setStatus(message string) {

@@ -139,7 +139,6 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 		}
 
 		completed := 0
-		duplicateGroups := make([][]string, 0)
 		for _, files := range bySize {
 			if isStopRequested() {
 				emitProgress(0, "Cancelled", true, true)
@@ -176,16 +175,11 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 					continue
 				}
 				sort.Strings(group)
-				groupCopy := append([]string(nil), group...)
-				duplicateGroups = append(duplicateGroups, groupCopy)
+				groupForUI := append([]string(nil), group...)
+				runOnMain(func() {
+					onGroup(groupForUI, musicDates)
+				})
 			}
-		}
-
-		for _, group := range duplicateGroups {
-			groupForUI := group
-			runOnMain(func() {
-				onGroup(groupForUI, musicDates)
-			})
 		}
 
 		emitProgress(1.0, "Finished", true, true)
