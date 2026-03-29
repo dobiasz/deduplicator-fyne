@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Go build artifacts
+__debug_bin*
+*.exe
+*.test
+
+# Fyne / local build output
+fxhelloworld
+deduplicator-fyne
+
+# Editor directories
+.vscode/

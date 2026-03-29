@@ -1,0 +1,17 @@
+{
+    "go.useLanguageServer": true,
+    "go.toolsEnvVars": {
+        "GO111MODULE": "on",
+        "GOOS": "darwin",
+        "CGO_ENABLED": "1"
+    },
+    "go.buildFlags": ["-tags=darwin"],
+    "go.testFlags": ["-tags=darwin"],
+    "gopls": {
+        "env": {
+            "GO111MODULE": "on",
+            "GOOS": "darwin",
+            "CGO_ENABLED": "1"
+        }
+    }
+}
