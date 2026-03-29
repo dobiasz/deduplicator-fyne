@@ -57,6 +57,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 
 		for _, root := range roots {
 			if isCancelled(ctx) {
+				runOnMain(func() { onProgress(0, "Cancelled", true) })
 				return
 			}
 			runOnMain(func() { onProgress(0, fmt.Sprintf("Scanning %s", root), false) })
@@ -103,6 +104,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 		completed := 0
 		for _, files := range bySize {
 			if isCancelled(ctx) {
+				runOnMain(func() { onProgress(0, "Cancelled", true) })
 				return
 			}
 			if len(files) <= 1 {
@@ -112,10 +114,11 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 			contentMap := map[[32]byte][]string{}
 			for _, path := range files {
 				if isCancelled(ctx) {
+					runOnMain(func() { onProgress(0, "Cancelled", true) })
 					return
 				}
 				runOnMain(func() {
-					onProgress(float64(completed)/float64(groupCount), fmt.Sprintf("Comparing %s", filepath.Base(path)), false)
+					onProgress(float64(completed-1)/float64(groupCount), fmt.Sprintf("Comparing %s", filepath.Base(path)), false)
 				})
 				data, err := os.ReadFile(path)
 				if err != nil {
