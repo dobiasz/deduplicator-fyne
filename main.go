@@ -16,6 +16,13 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
+const (
+	windowWidthPrefKey  = "window.width"
+	windowHeightPrefKey = "window.height"
+	defaultWindowWidth  = 1200
+	defaultWindowHeight = 850
+)
+
 type AppUI struct {
 	app            fyne.App
 	win            fyne.Window
@@ -48,10 +55,36 @@ func main() {
 
 	a := app.New()
 	w := a.NewWindow("FX Hello World - Go/Fyne")
-	w.Resize(fyne.NewSize(1200, 850))
 	ui := newAppUI(a, w)
 	ui.build()
+	applySavedWindowSize(a, w)
+	installWindowSizePersistence(a, w)
 	w.ShowAndRun()
+}
+
+func applySavedWindowSize(a fyne.App, w fyne.Window) {
+	prefs := a.Preferences()
+	width := prefs.FloatWithFallback(windowWidthPrefKey, defaultWindowWidth)
+	height := prefs.FloatWithFallback(windowHeightPrefKey, defaultWindowHeight)
+
+	if width < 600 {
+		width = defaultWindowWidth
+	}
+	if height < 400 {
+		height = defaultWindowHeight
+	}
+
+	w.Resize(fyne.NewSize(float32(width), float32(height)))
+}
+
+func installWindowSizePersistence(a fyne.App, w fyne.Window) {
+	w.SetCloseIntercept(func() {
+		size := w.Canvas().Size()
+		prefs := a.Preferences()
+		prefs.SetFloat(windowWidthPrefKey, float64(size.Width))
+		prefs.SetFloat(windowHeightPrefKey, float64(size.Height))
+		w.Close()
+	})
 }
 
 func newAppUI(a fyne.App, w fyne.Window) *AppUI {
@@ -83,9 +116,13 @@ func (ui *AppUI) build() {
 	ui.rootsList.OnSelected = func(id widget.ListItemID) {
 		ui.selectedRoot = int(id)
 	}
+	rootsScroll := container.NewScroll(ui.rootsList)
+	rootsScroll.SetMinSize(fyne.NewSize(420, 96))
 	addBtn := widget.NewButton("+", ui.addRoot)
 	removeBtn := widget.NewButton("-", ui.removeRoot)
-	rootSelector := container.NewVBox(widget.NewLabel("Roots"), ui.rootsList, container.NewHBox(addBtn, removeBtn))
+	rootButtons := container.NewVBox(addBtn, removeBtn, layout.NewSpacer())
+	rootListPanel := container.NewPadded(container.NewBorder(nil, nil, nil, nil, rootsScroll))
+	rootSelector := container.NewBorder(nil, nil, rootButtons, nil, widget.NewCard("", "", rootListPanel))
 
 	ui.startBtn = widget.NewButton("Start", ui.startScan)
 	ui.stopBtn = widget.NewButton("Stop", ui.stopScan)
@@ -178,8 +215,14 @@ func (ui *AppUI) startScan() {
 			if runID != ui.scanRunID {
 				return
 			}
-			ui.progressBar.SetValue(progress)
-			ui.setStatus(message)
+			if !(finished && message == "Cancelled") {
+				ui.progressBar.SetValue(progress)
+			}
+			if finished && message == "Cancelled" {
+				ui.setStatus("Ready")
+			} else {
+				ui.setStatus(message)
+			}
 			if finished {
 				ui.startBtn.Enable()
 				ui.stopBtn.Disable()
@@ -221,7 +264,7 @@ func (ui *AppUI) stopScan() {
 			}
 			ui.startBtn.Enable()
 			ui.stopBtn.Disable()
-			ui.setStatus("Cancelled")
+			ui.setStatus("Ready")
 		})
 	}()
 }
