@@ -17,8 +17,11 @@ import (
 )
 
 const (
+	appID              = "com.dobiasz.deduplicator-fyne"
 	windowWidthPrefKey  = "window.width"
 	windowHeightPrefKey = "window.height"
+	windowXPrefKey      = "window.x"
+	windowYPrefKey      = "window.y"
 	defaultWindowWidth  = 1200
 	defaultWindowHeight = 850
 )
@@ -53,11 +56,12 @@ func main() {
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	a := app.New()
+	a := app.NewWithID(appID)
 	w := a.NewWindow("FX Hello World - Go/Fyne")
 	ui := newAppUI(a, w)
 	ui.build()
 	applySavedWindowSize(a, w)
+	restoreWindowPosition(a, w)
 	installWindowSizePersistence(a, w)
 	w.ShowAndRun()
 }
@@ -79,6 +83,8 @@ func applySavedWindowSize(a fyne.App, w fyne.Window) {
 
 func installWindowSizePersistence(a fyne.App, w fyne.Window) {
 	w.SetCloseIntercept(func() {
+		saveWindowPosition(a, w)
+
 		size := w.Canvas().Size()
 		prefs := a.Preferences()
 		prefs.SetFloat(windowWidthPrefKey, float64(size.Width))
