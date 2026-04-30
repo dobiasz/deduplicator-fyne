@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image/color"
 	"os"
 	"os/exec"
@@ -21,7 +22,7 @@ import (
 )
 
 const (
-	appID              = "com.dobiasz.deduplicator-fyne"
+	appID               = "com.dobiasz.deduplicator-fyne"
 	windowWidthPrefKey  = "window.width"
 	windowHeightPrefKey = "window.height"
 	windowXPrefKey      = "window.x"
@@ -131,7 +132,7 @@ func (ui *AppUI) build() {
 		ui.selectedRoot = int(id)
 	}
 	rootsScroll := container.NewScroll(ui.rootsList)
-	rootsScroll.SetMinSize(fyne.NewSize(420, 96))
+	rootsScroll.SetMinSize(fyne.NewSize(420, 128))
 	addBtn := widget.NewButton("+", ui.addRoot)
 	removeBtn := widget.NewButton("-", ui.removeRoot)
 	rootButtons := container.NewVBox(addBtn, removeBtn, layout.NewSpacer())
@@ -239,7 +240,7 @@ func (ui *AppUI) startScan() {
 				ui.progressBar.SetValue(progress)
 			}
 			if finished && message == "Cancelled" {
-				ui.setStatus("Ready")
+				ui.setStatus(fmt.Sprintf("[%d] Ready", len(ui.duplicateBox.Objects)))
 			} else {
 				ui.setStatus(message)
 			}
@@ -247,7 +248,7 @@ func (ui *AppUI) startScan() {
 				ui.startBtn.Enable()
 				ui.stopBtn.Disable()
 			}
-		})
+		}, ui.duplicateBox)
 	go func() {
 		// Keep UI state updated in case the scan ends immediately.
 		<-ui.scanManager.done()
@@ -264,7 +265,7 @@ func (ui *AppUI) stopScan() {
 	if !ui.scanManager.IsRunning() {
 		ui.stopBtn.Disable()
 		ui.startBtn.Enable()
-		ui.setStatus("Ready")
+		ui.setStatus(fmt.Sprintf("[%d] Ready", len(ui.duplicateBox.Objects)))
 		return
 	}
 
@@ -275,7 +276,7 @@ func (ui *AppUI) stopScan() {
 	ui.stopBtn.Disable()
 	ui.startBtn.Disable()
 	ui.scanManager.Cancel()
-	ui.setStatus("Ready")
+	ui.setStatus(fmt.Sprintf("[%d] Ready", len(ui.duplicateBox.Objects)))
 
 	go func() {
 		<-ui.scanManager.done()
@@ -285,7 +286,7 @@ func (ui *AppUI) stopScan() {
 			}
 			ui.startBtn.Enable()
 			ui.stopBtn.Disable()
-			ui.setStatus("Ready")
+			ui.setStatus(fmt.Sprintf("[%d] Ready", len(ui.duplicateBox.Objects)))
 		})
 	}()
 }
@@ -334,6 +335,7 @@ func (ui *AppUI) revalidateDuplicates() {
 		ui.revalidateBtn.Disable()
 		return
 	}
+	ui.setStatus(fmt.Sprintf("[%d] Ready", len(ui.duplicateBox.Objects)))
 	ui.revalidateBtn.Enable()
 }
 

@@ -26,15 +26,15 @@ type ScanCallback func(group []string, musicDates map[string]string)
 type ScanProgress func(progress float64, message string, finished bool)
 
 type ScanManager struct {
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.Mutex
-	running bool
-	doneCh  chan struct{}
+	ctx             context.Context
+	cancel          context.CancelFunc
+	mu              sync.Mutex
+	running         bool
+	doneCh          chan struct{}
 	cancelRequested atomic.Bool
 }
 
-func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGroup ScanCallback, onProgress ScanProgress) {
+func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGroup ScanCallback, onProgress ScanProgress, duplicateBox *fyne.Container) {
 	m.mu.Lock()
 	if m.cancel != nil {
 		m.cancel()
@@ -59,7 +59,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 		isStopRequested := func() bool {
 			return m.cancelRequested.Load() || isCancelled(ctx)
 		}
-		emitProgress := func(progress float64, message string, finished bool, force bool) {
+		emitProgress := func(progress float64, message string, finished bool, force bool, foundDuplicates int) {
 			if !force && isStopRequested() {
 				return
 			}
@@ -68,11 +68,11 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 				return
 			}
 			lastProgressAt = now
-			runOnMain(func() { onProgress(progress, message, finished) })
+			runOnMain(func() { onProgress(progress, fmt.Sprintf("[%d] %s", foundDuplicates, message), finished) })
 		}
 
 		if len(roots) == 0 {
-			emitProgress(0, "Add at least one root before starting", true, true)
+			emitProgress(0, "Add at least one root before starting", true, true, len(duplicateBox.Objects))
 			return
 		}
 
@@ -84,10 +84,10 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 
 		for _, root := range roots {
 			if isStopRequested() {
-				emitProgress(0, "Cancelled", true, true)
+				emitProgress(0, "Cancelled", true, true, len(duplicateBox.Objects))
 				return
 			}
-			emitProgress(0, fmt.Sprintf("Scanning %s", root), false, true)
+			emitProgress(0, fmt.Sprintf("Scanning %s", root), false, true, len(duplicateBox.Objects))
 			filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 				if err != nil {
 					fmt.Println(err)
@@ -107,7 +107,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 				now := time.Now()
 				if lastScanStatusAt.IsZero() || now.Sub(lastScanStatusAt) > 120*time.Millisecond {
 					lastScanStatusAt = now
-					emitProgress(0, fmt.Sprintf("Scanning %s", path), false, false)
+					emitProgress(0, fmt.Sprintf("Scanning %s", path), false, false, len(duplicateBox.Objects))
 				}
 
 				info, err := d.Info()
@@ -129,7 +129,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 				return nil
 			})
 
-			emitProgress(0, fmt.Sprintf("Scanned %d files in %s", scannedFiles, root), false, false)
+			emitProgress(0, fmt.Sprintf("Scanned %d files in %s", scannedFiles, root), false, false, len(duplicateBox.Objects))
 		}
 
 		for _, files := range bySize {
@@ -141,7 +141,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 		completed := 0
 		for _, files := range bySize {
 			if isStopRequested() {
-				emitProgress(0, "Cancelled", true, true)
+				emitProgress(0, "Cancelled", true, true, len(duplicateBox.Objects))
 				return
 			}
 			if len(files) <= 1 {
@@ -151,18 +151,18 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 			contentMap := map[[32]byte][]string{}
 			for fileIdx, path := range files {
 				if isStopRequested() {
-					emitProgress(0, "Cancelled", true, true)
+					emitProgress(0, "Cancelled", true, true, len(duplicateBox.Objects))
 					return
 				}
 				// Show progress as group progress + per-file progress within group
 				fileProgress := float64(fileIdx) / float64(len(files))
 				groupProgress := float64(completed-1) / float64(groupCount)
 				overallProgress := (groupProgress + fileProgress/float64(groupCount))
-				emitProgress(overallProgress, fmt.Sprintf("Comparing %s", filepath.Base(path)), false, false)
+				emitProgress(overallProgress, fmt.Sprintf("Comparing %s", filepath.Base(path)), false, false, len(duplicateBox.Objects))
 				hash, err := hashFileWithCancel(ctx, path)
 				if err != nil {
 					if err == context.Canceled {
-						emitProgress(0, "Cancelled", true, true)
+						emitProgress(0, "Cancelled", true, true, len(duplicateBox.Objects))
 						return
 					}
 					fmt.Println(err)
@@ -182,7 +182,7 @@ func (m *ScanManager) Start(roots []string, removeInternal, skipMp3 bool, onGrou
 			}
 		}
 
-		emitProgress(1.0, "Finished", true, true)
+		emitProgress(1.0, "Finished", true, true, len(duplicateBox.Objects))
 	}()
 }
 
@@ -214,7 +214,6 @@ func runOnMain(fn func()) {
 func isCancelled(ctx context.Context) bool {
 	return ctx != nil && ctx.Err() != nil
 }
-
 
 // hashFileWithCancel computes a file hash in chunks so cancellation can interrupt compare quickly.
 func hashFileWithCancel(ctx context.Context, path string) ([32]byte, error) {
